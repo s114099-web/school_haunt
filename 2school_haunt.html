@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>學校靈異逃脫 - 純色地圖驗證版</title>
+    <style>
+        /* 1. CSS 樣式：設定頁面和 Canvas 居中 */
+        body {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #111;
+            color: #ddd;
+            font-family: '微軟正黑體', 'Pixelated', sans-serif;
+            user-select: none;
+        }
+        canvas {
+            border: 3px solid #666;
+            image-rendering: pixelated; /* 確保圖片不模糊 */
+            background-color: #222;
+        }
+        #overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.9);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+        }
+        .select-btn {
+            padding: 15px 30px;
+            margin: 10px;
+            font-size: 1.5em;
+            cursor: pointer;
+            background-color: #3498db;
+            color: white;
+            border: 3px solid #2980b9;
+            border-radius: 5px;
+            transition: background-color 0.2s;
+        }
+        .select-btn:hover {
+            background-color: #2980b9;
+        }
+        #info {
+            margin-top: 15px;
+            font-size: 1.1em;
+            color: #f39c12;
+        }
+        .controls {
+            margin-bottom: 10px;
+            font-size: 0.9em;
+        }
+        .controls span {
+            color: #2ecc71;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>🔫 學校靈異逃脫 - 純色地圖驗證版 👻</h1>
+    <div class="controls">
+        移動：<span>W A S D</span> | 攻擊：<span>滑鼠左鍵射擊</span>
+    </div>
+
+    <canvas id="gameCanvas" width="800" height="560"></canvas>
+    
+    <div id="info">尋找綠色出口！ (左鍵點擊可射擊鬼魂)</div>
+
+    <div id="overlay">
+        <h2>選擇您的角色</h2>
+        <div style="display: flex;">
+            <div class="select-btn" data-char="A">
+                角色 A (藍色)
+                <img id="charA_img" width="50" height="50" style="image-rendering: pixelated; display: block; margin: 5px auto 0;">
+            </div>
+            <div class="select-btn" data-char="B">
+                角色 B (紅色)
+                <img id="charB_img" width="50" height="50" style="image-rendering: pixelated; display: block; margin: 5px auto 0;">
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const TILE_SIZE = 40; 
+        const PLAYER_SPEED = 3.5;
+        const GHOST_SPEED = 2.5;
+        const VIEW_RADIUS = TILE_SIZE * 4.5;
+        const OVERLAY = document.getElementById('overlay');
+        const INFO_DIV = document.getElementById('info');
+
+        // --- 資源：Base64 像素圖數據 (保持不變) ---
+        const ASSETS = {
+            PLAYER_A: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAAXNSR0IArs4c6QAAADhJREFUGFdjZEAD///gH0CGo0ePMgPIMgYlA5BkbKACtADXoEYgLqA2jFADgA3gY4AWAzQYQ4kBANg4G1n10/QCAAAAAElFTkSuQmCC", 
+            PLAYER_B: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAAXNSR0IArs4c6QAAADhJREFUGFdjZEAD///gH0CGo0ePMgPI/v8/f8vAyg0UagCtQhZAHYhHkCpgI9iBBiATDQD/8wRMAAD2QhvZ3Fp4qAAAAABJRU5ErkJggg==",
+            GHOST: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAAXNSR0IArs4c6QAAAEFJREFUGFdjZEAD///gHyxY8P//nwzI/v///7//QoJk+P//z8jKDAcMDwQYGBjBkwgXNIMhA8hkg/hEgw4wYxQAAH1Qe3R157i+AAAAAElFTkSuQmCC",
+            FLOOR: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAIAgMAAAAQJ/o3AAAACVBMVEXR0dHNzc2+vr4Q3jSNAAAAG0lEQVQI12NgYGZmYGBiY2BkYAACkQEZg2QAAJ6nAQc1E3S6AAAAAElFTkSuQmCC", 
+            WALL: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAIAgMAAAAQJ/o3AAAACVBMVEXq6urPz8/w8PAo+G37AAAAG0lEQVQI12NgYGAkZGRhYmJiZgACkQEZQ2QAAI1gAQf1v1xGAAAAAElFTkSuQmCC"
+        };
+        
+        const images = {};
+        let loadedImages = 0;
+        const totalImages = Object.keys(ASSETS).length;
+
+        function loadAssets(callback) {
+            for (let key in ASSETS) {
+                images[key] = new Image();
+                images[key].onload = () => {
+                    loadedImages++;
+                    if (loadedImages === totalImages) {
+                        callback();
+                    }
+                };
+                images[key].onerror = () => {
+                    console.error("圖片載入錯誤:", key);
+                    // 即使圖片載入失敗，也讓計數器增加，避免遊戲卡住
+                    loadedImages++; 
+                    if (loadedImages === totalImages) {
+                        callback();
+                    }
+                };
+                images[key].src = ASSETS[key];
+            }
+            document.getElementById('charA_img').src = ASSETS.PLAYER_A;
+            document.getElementById('charB_img').src = ASSETS.PLAYER_B;
+        }
+
+        // 遊戲地圖 (保持不變)
+        const MAP = [
+            [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+            [1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 1],
+            [1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1],
+            [1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+            [1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1],
+            [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+            [1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1],
+            [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+            [1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1],
+            [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+            [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1],
+            [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+            [1, 2, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1], 
+            [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+        ];
+        
+        let player = {};
+        let ghost = {};
+        let bullets = [];
+        let keys = {};
+        let mouse = { x: 0, y: 0, clicked: false };
+        let gameActive = false;
+        let gameStatus = "SELECTING";
+
+        function findStart(type) {
+            for (let r = 0; r < MAP.length; r++) {
+                for (let c = 0; c < MAP[r].length; c++) {
+                    if (MAP[r][c] === type) {
+                        return { x: c * TILE_SIZE + TILE_SIZE / 2, y: r * TILE_SIZE + TILE_SIZE / 2 };
+                    }
+                }
+            }
+        }
+        
+        function initGame(playerChar) {
+            player = {
+                ...findStart(2),
+                width: TILE_SIZE * 0.5,
+                height: TILE_SIZE * 0.5,
+                charImg: images[playerChar],
+                rotation: 0,
+                hitboxOffset: 0.1
+            };
+
+            ghost = {
+                ...findStart(3),
+                width: TILE_SIZE * 0.8,
+                height: TILE_SIZE * 0.8,
+                speed: GHOST_SPEED,
+                charImg: images.GHOST,
+                isStunned: false,
+                stunTimer: 0,
+                hitboxOffset: 0.1
+            };
+            
+            bullets = [];
+            gameActive = true;
+            gameStatus = "PLAYING";
+            OVERLAY.style.display = 'none';
+        }
+
+        // --- 事件監聽器 (保持不變) ---
+
+        document.addEventListener('keydown', (e) => {
+            keys[e.key.toLowerCase()] = true;
+            keys[e.key] = true;
+        });
+
+        document.addEventListener('keyup', (e) => {
+            keys[e.key.toLowerCase()] = false;
+            keys[e.key] = false;
+        });
+        
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            mouse.x = e.clientX - rect.left;
+            mouse.y = e.clientY - rect.top;
+            
+            if (gameActive) {
+                const dx = mouse.x - player.x;
+                const dy = mouse.y - player.y;
+                player.rotation = Math.atan2(dy, dx);
+            }
+        });
+
+        canvas.addEventListener('mousedown', (e) => {
+            if (e.button === 0 && gameActive) {
+                mouse.clicked = true;
+            }
+        });
+
+        canvas.addEventListener('mouseup', (e) => {
+            if (e.button === 0) {
+                mouse.clicked = false;
+            }
+        });
+
+        document.querySelectorAll('.select-btn').forEach(button => {
+            button.addEventListener('click', (e) => {
+                if (gameStatus === "SELECTING") {
+                    const charId = e.currentTarget.getAttribute('data-char');
+                    initGame('PLAYER_' + charId);
+                }
+            });
+        });
+
+
+        // --- 繪圖函數 (修正版) ---
+
+        function drawMap() {
+            // *** 修正重點：使用純色繪製地圖 ***
+            // const floorPattern = ctx.createPattern(images.FLOOR, 'repeat'); // 註釋掉貼圖
+            // const wallPattern = ctx.createPattern(images.WALL, 'repeat');   // 註釋掉貼圖
+
+            for (let r = 0; r < MAP.length; r++) {
+                for (let c = 0; c < MAP[r].length; c++) {
+                    const tile = MAP[r][c];
+                    const x = c * TILE_SIZE;
+                    const y = r * TILE_SIZE;
+
+                    if (tile === 1) {
+                        ctx.fillStyle = '#666'; // 牆壁/教室
+                    } else if (tile === 4) {
+                        ctx.fillStyle = '#2ecc71'; // 出口 (綠色)
+                    } else {
+                        ctx.fillStyle = '#333'; // 走廊地板
+                    }
+                    ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
+                    
+                    // 繪製網格線
+                    ctx.strokeStyle = 'rgba(0, 0, 0, 0.1)';
+                    ctx.strokeRect(x, y, TILE_SIZE, TILE_SIZE);
+                }
+            }
+        }
+        
+        // 角色、鬼魂、子彈、黑暗的繪圖邏輯 (保持不變)
+        function drawRotatedImage(img, x, y, width, height, angle) {
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.rotate(angle);
+            ctx.drawImage(img, -width / 2, -height / 2, width, height);
+            ctx.restore();
+        }
+
+        function drawPlayer() {
+            if (!player.charImg.complete || player.charImg.naturalWidth === 0) {
+                 // 如果 Base64 載入失敗，用純色圓點替代，避免完全隱形
+                 ctx.fillStyle = 'cyan';
+                 ctx.beginPath();
+                 ctx.arc(player.x, player.y, player.width / 2, 0, Math.PI * 2);
+                 ctx.fill();
+            } else {
+                drawRotatedImage(
+                    player.charImg, 
+                    player.x, 
+                    player.y, 
+                    player.width * 2,
+                    player.height * 2, 
+                    player.rotation
+                );
+            }
+        }
+
+        function drawGhost() {
+            if (!ghost.charImg.complete || ghost.charImg.naturalWidth === 0) {
+                // 如果 Base64 載入失敗，用純色圓點替代
+                ctx.fillStyle = 'red';
+                ctx.beginPath();
+                ctx.arc(ghost.x, ghost.y, ghost.width / 2, 0, Math.PI * 2);
+                ctx.fill();
+                return;
+            }
+            
+            if (ghost.isStunned && (ghost.stunTimer % 10 < 5)) {
+                ctx.globalAlpha = 0.5;
+                ctx.fillStyle = 'white';
+                ctx.fillRect(ghost.x - ghost.width / 2, ghost.y - ghost.height / 2, ghost.width, ghost.height);
+                ctx.globalAlpha = 1.0;
+            } else if (!ghost.isStunned && Math.random() < 0.05) {
+                ctx.globalAlpha = 0.8;
+            }
+
+            drawRotatedImage(
+                ghost.charImg, 
+                ghost.x, 
+                ghost.y, 
+                ghost.width * 1.5,
+                ghost.height * 1.5, 
+                0
+            );
+            ctx.globalAlpha = 1.0;
+        }
+        
+        function drawBullets() {
+            bullets.forEach(b => {
+                ctx.fillStyle = b.color;
+                ctx.beginPath();
+                ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
+                ctx.fill();
+            });
+        }
+
+        function drawDarkness() {
+            const gradient = ctx.createRadialGradient(
+                player.x, player.y, VIEW_RADIUS * 0.3, 
+                player.x, player.y, VIEW_RADIUS
+            );
+            
+            gradient.addColorStop(0, 'rgba(0, 0, 0, 0)');
+            gradient.addColorStop(1, 'rgba(0, 0, 0, 0.95)');
+
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+
+        // --- 遊戲邏輯函數 (保持不變) ---
+
+        function isWall(x, y) {
+            const c = Math.floor(x / TILE_SIZE);
+            const r = Math.floor(y / TILE_SIZE);
+
+            if (r < 0 || r >= MAP.length || c < 0 || c >= MAP[0].length) {
+                return true;
+            }
+            return MAP[r][c] === 1;
+        }
+
+        function checkCollision(obj, nextX, nextY) {
+            const halfSize = obj.width * (0.5 - obj.hitboxOffset);
+            const points = [
+                { x: nextX - halfSize, y: nextY - halfSize },
+                { x: nextX + halfSize, y: nextY - halfSize },
+                { x: nextX - halfSize, y: nextY + halfSize },
+                { x: nextX + halfSize, y: nextY + halfSize }
+            ];
+
+            for (const point of points) {
+                if (isWall(point.x, point.y)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        
+        function updatePlayer() {
+            let nextX = player.x;
+            let nextY = player.y;
+
+            if (keys['w'] || keys['ArrowUp']) nextY -= PLAYER_SPEED;
+            if (keys['s'] || keys['ArrowDown']) nextY += PLAYER_SPEED;
+            if (keys['a'] || keys['ArrowLeft']) nextX -= PLAYER_SPEED;
+            if (keys['d'] || keys['ArrowRight']) nextX += PLAYER_SPEED;
+
+            if (!checkCollision(player, nextX, player.y)) player.x = nextX;
+            if (!checkCollision(player, player.x, nextY)) player.y = nextY;
+            
+            const exitTile = MAP[Math.floor(player.y / TILE_SIZE)][Math.floor(player.x / TILE_SIZE)];
+            if (exitTile === 4) {
+                gameStatus = "WIN";
+                gameActive = false;
+            }
+        }
+        
+        let shootDelay = 0;
+        const SHOOT_RATE = 15;
+
+        function handleShooting() {
+            if (shootDelay > 0) {
+                shootDelay--;
+                return;
+            }
+            
+            if (mouse.clicked) {
+                const angle = player.rotation;
+                const bullet = {
+                    x: player.x + Math.cos(angle) * player.width,
+                    y: player.y + Math.sin(angle) * player.width,
+                    vx: Math.cos(angle) * 10,
+                    vy: Math.sin(angle) * 10,
+                    radius: 3,
+                    color: 'yellow'
+                };
+                bullets.push(bullet);
+                shootDelay = SHOOT_RATE;
+            }
+        }
+        
+        function updateBullets() {
+            for (let i = bullets.length - 1; i >= 0; i--) {
+                const b = bullets[i];
+                b.x += b.vx;
+                b.y += b.vy;
+                
+                if (isWall(b.x, b.y)) {
+                    bullets.splice(i, 1);
+                    continue;
+                }
+                
+                const dx = b.x - ghost.x;
+                const dy = b.y - ghost.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance < ghost.width / 2) {
+                    ghost.isStunned = true;
+                    ghost.stunTimer = 40;
+                    bullets.splice(i, 1);
+                    
+                    const angle = Math.atan2(dy, dx);
+                    
+                    ghost.x += Math.cos(angle) * TILE_SIZE / 2;
+                    ghost.y += Math.sin(angle) * TILE_SIZE / 2;
+                    
+                    if (checkCollision(ghost, ghost.x, ghost.y)) {
+                        ghost.x -= Math.cos(angle) * TILE_SIZE / 2;
+                        ghost.y -= Math.sin(angle) * TILE_SIZE / 2;
+                    }
+                    continue;
+                }
+                
+                if (b.x < 0 || b.x > canvas.width || b.y < 0 || b.y > canvas.height) {
+                    bullets.splice(i, 1);
+                }
+            }
+        }
+
+        function updateGhost() {
+            if (ghost.isStunned) {
+                ghost.stunTimer--;
+                if (ghost.stunTimer <= 0) {
+                    ghost.isStunned = false;
+                }
+                return;
+            }
+
+            const dx = player.x - ghost.x;
+            const dy = player.y - ghost.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+
+            if (distance > 1) {
+                const vx = (dx / distance) * ghost.speed;
+                const vy = (dy / distance) * ghost.speed;
+
+                let nextX = ghost.x + vx;
+                let nextY = ghost.y + vy;
+                
+                if (!checkCollision(ghost, nextX, ghost.y)) {
+                    ghost.x = nextX;
+                }
+                if (!checkCollision(ghost, ghost.x, nextY)) {
+                    ghost.y = nextY;
+                }
+            }
+
+            if (distance < (player.width / 2 + ghost.width / 2) * 0.8) {
+                gameStatus = "LOSE";
+                gameActive = false;
+            }
+        }
+
+        // 遊戲主循環
+        function gameLoop() {
+            if (gameStatus === "SELECTING") {
+                requestAnimationFrame(gameLoop);
+                return;
+            }
+            
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            drawMap(); // 繪製地圖
+            
+            if (gameActive) {
+                updatePlayer();
+                updateGhost();
+                handleShooting();
+                updateBullets();
+                
+                drawBullets();
+                drawGhost();
+                drawPlayer();
+                
+                drawDarkness();
+                
+            } else {
+                // 遊戲結束畫面
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.9)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.font = 'bold 48px 微軟正黑體';
+                ctx.textAlign = 'center';
+                
+                if (gameStatus === "WIN") {
+                    ctx.fillStyle = '#2ecc71';
+                    ctx.fillText('🏆 成功逃脫！任務完成 🏆', canvas.width / 2, canvas.height / 2);
+                } else if (gameStatus === "LOSE") {
+                    ctx.fillStyle = '#e74c3c';
+                    ctx.fillText('GAME OVER', canvas.width / 2, canvas.height / 2 - 30);
+                    ctx.font = '28px 微軟正黑體';
+                    ctx.fillText('你被鬼魂抓住了...', canvas.width / 2, canvas.height / 2 + 20);
+                }
+                ctx.font = '20px 微軟正黑體';
+                ctx.fillStyle = '#aaa';
+                ctx.fillText('刷新頁面重新開始', canvas.width / 2, canvas.height / 2 + 80);
+            }
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        // 啟動資產載入和遊戲循環
+        loadAssets(gameLoop);
+    </script>
+
+</body>
+</html>
